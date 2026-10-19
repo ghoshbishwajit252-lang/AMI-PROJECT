@@ -3,17 +3,13 @@ import { useApp } from '../../context/AppContext';
 import { 
   Truck, 
   CheckCircle2, 
-  AlertTriangle, 
   QrCode, 
   ShieldCheck, 
   Lock, 
   Unlock, 
-  FileText, 
   AlertOctagon, 
   Printer, 
-  ExternalLink,
-  Sparkles,
-  ClipboardCheck
+  ExternalLink
 } from 'lucide-react';
 import { sounds } from '../../utils/audio';
 
@@ -23,8 +19,7 @@ export default function ShippingGatekeeper() {
     selectedWorkOrderId, 
     setSelectedWorkOrderId, 
     evaluateShippingClearance, 
-    generateShippingGatePass,
-    currentUser 
+    generateShippingGatePass
   } = useApp();
 
   const [activeWOId, setActiveWOId] = useState(selectedWorkOrderId);

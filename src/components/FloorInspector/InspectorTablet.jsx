@@ -6,7 +6,6 @@ import PhotoCaptureModal from './PhotoCaptureModal';
 import { 
   QrCode, 
   CheckCircle2, 
-  AlertTriangle, 
   ShieldAlert, 
   Camera, 
   Lock, 
@@ -14,9 +13,10 @@ import {
   Wrench, 
   AlertOctagon, 
   Send,
-  RotateCcw,
-  Sparkles,
-  Info
+  Info,
+  Mic,
+  Volume2,
+  Radio
 } from 'lucide-react';
 import { sounds } from '../../utils/audio';
 
@@ -27,7 +27,11 @@ export default function InspectorTablet() {
     selectedWorkOrderId, 
     setSelectedWorkOrderId, 
     submitInspection,
-    gloveMode 
+    gloveMode,
+    announceMeasurement,
+    speakText,
+    voiceEngine,
+    setVoiceAssistantOpen
   } = useApp();
 
   const [activeWO, setActiveWO] = useState(() => {
@@ -54,6 +58,8 @@ export default function InspectorTablet() {
   const [photoModalConfig, setPhotoModalConfig] = useState(null); // { dimId, dimName, value, specLimits, isCTQ }
   const [expiredToolAlert, setExpiredToolAlert] = useState(null);
   const [inspectorNotes, setInspectorNotes] = useState('');
+  const [activeListeningDimId, setActiveListeningDimId] = useState(null);
+  const [isDictatingNotes, setIsDictatingNotes] = useState(false);
 
   // Sync activeWO when selectedWorkOrderId changes
   useEffect(() => {
@@ -182,8 +188,10 @@ export default function InspectorTablet() {
 
     if (evalResult.pass === true) {
       sounds.playPass();
+      announceMeasurement(dim.name, value, dim.unit, true, dim.isCTQ);
     } else if (evalResult.pass === false) {
       sounds.playFail();
+      announceMeasurement(dim.name, value, dim.unit, false, dim.isCTQ);
 
       // Trigger Mandatory Defect Photo Capture Workflow (PRD Section 5.4)
       if (defectPhotos.length < 2) {
@@ -313,6 +321,132 @@ export default function InspectorTablet() {
     submitInspection(activeWO.id, payload);
   };
 
+  // Voice Input for a specific dimension
+  const listenForDimension = (dim) => {
+    setSelectedPinId(dim.id);
+    if (activeListeningDimId === dim.id) {
+      voiceEngine.stopListening();
+      setActiveListeningDimId(null);
+      return;
+    }
+
+    setActiveListeningDimId(dim.id);
+    sounds.playClick();
+    speakText(`Listening for ${dim.name}. Say the measurement.`, true);
+
+    voiceEngine.startListening({
+      onResult: (spokenText) => {
+        setActiveListeningDimId(null);
+        const lower = spokenText.toLowerCase();
+        if (dim.type === 'PASS_FAIL') {
+          if (lower.includes('pass') || lower.includes('ok') || lower.includes('conforming') || lower === '1') {
+            handleInputChange(dim, '1');
+          } else if (lower.includes('fail') || lower.includes('burr') || lower.includes('non') || lower === '0') {
+            handleInputChange(dim, '0');
+          }
+        } else {
+          const numMatch = lower.match(/-?\d+(?:\.\d+)?/);
+          if (numMatch) {
+            handleInputChange(dim, numMatch[0]);
+          } else {
+            speakText(`Could not understand number from "${spokenText}". Please try again.`);
+          }
+        }
+      },
+      onError: () => {
+        setActiveListeningDimId(null);
+      },
+      onEnd: () => {
+        setActiveListeningDimId(null);
+      }
+    });
+  };
+
+  // Voice Dictation for Inspector Remarks
+  const listenForNotes = () => {
+    if (isDictatingNotes) {
+      voiceEngine.stopListening();
+      setIsDictatingNotes(false);
+      return;
+    }
+
+    setIsDictatingNotes(true);
+    sounds.playClick();
+    speakText("Dictate inspector remarks.", true);
+
+    voiceEngine.startListening({
+      onResult: (spokenText) => {
+        setIsDictatingNotes(false);
+        setInspectorNotes(prev => prev ? `${prev} ${spokenText}` : spokenText);
+        sounds.playPass();
+      },
+      onError: () => {
+        setIsDictatingNotes(false);
+      },
+      onEnd: () => {
+        setIsDictatingNotes(false);
+      }
+    });
+  };
+
+  // Audio checklist narration
+  const handleReadChecklistAloud = () => {
+    const listStr = template.dimensions.map((d, i) => `Point ${i + 1}: ${d.name}, requirement ${d.type === 'PASS_FAIL' ? d.notes : `${d.nominal} ${d.unit}`}`).join(". ");
+    speakText(`Inspection checklist for ${template.partNumber}. ${listStr}`, true);
+  };
+
+  // Listen for global custom voice commands dispatched by VoiceAssistantHUD or voiceEngine
+  useEffect(() => {
+    const handleVoiceEvent = (e) => {
+      const { cmd } = e.detail || {};
+      if (!cmd) return;
+
+      if (cmd.type === 'SET_DIMENSION_VALUE') {
+        const targetDim = template.dimensions[cmd.dimIndex - 1];
+        if (targetDim) {
+          setSelectedPinId(targetDim.id);
+          handleInputChange(targetDim, cmd.value);
+        }
+      } else if (cmd.type === 'SET_CURRENT_DIMENSION_VALUE') {
+        const activeDim = template.dimensions.find(d => d.id === selectedPinId) || template.dimensions[0];
+        if (activeDim) {
+          handleInputChange(activeDim, cmd.value);
+          const curIdx = template.dimensions.findIndex(d => d.id === activeDim.id);
+          if (curIdx < template.dimensions.length - 1) {
+            setSelectedPinId(template.dimensions[curIdx + 1].id);
+          }
+        }
+      } else if (cmd.type === 'SET_PASS_FAIL') {
+        const activeDim = template.dimensions.find(d => d.type === 'PASS_FAIL') || template.dimensions.find(d => d.id === selectedPinId);
+        if (activeDim) {
+          handleInputChange(activeDim, cmd.value);
+        }
+      } else if (cmd.type === 'APPEND_NOTE') {
+        setInspectorNotes(prev => prev ? `${prev} | ${cmd.content}` : cmd.content);
+      } else if (cmd.type === 'OPEN_CAMERA') {
+        const failDim = template.dimensions.find(d => measurements[d.id]?.pass === false) || template.dimensions[0];
+        setPhotoModalConfig({
+          dimId: failDim.id,
+          dimensionName: failDim.name,
+          measuredValue: measurements[failDim.id]?.value || 'Out of spec',
+          specLimits: `${failDim.nominal} [${failDim.lowerTol}, +${failDim.upperTol}]`,
+          isCTQ: failDim.isCTQ
+        });
+      } else if (cmd.type === 'SCAN_QR') {
+        setShowQRModal(true);
+      } else if (cmd.type === 'SUBMIT_INSPECTION') {
+        if (canSubmit) {
+          handleSubmit({ preventDefault: () => {} });
+        } else {
+          speakText("Cannot submit yet. Verify station QR and complete all dimensions first.");
+        }
+      }
+    };
+
+    window.addEventListener('zapuza-voice-command', handleVoiceEvent);
+    return () => window.removeEventListener('zapuza-voice-command', handleVoiceEvent);
+  }, [template, selectedPinId, measurements, canSubmit, stationVerified]);
+
   return (
     <div style={{ maxWidth: 1540, margin: '0 auto', padding: '24px 20px', display: 'flex', flexDirection: 'column', gap: 20 }}>
       
@@ -353,7 +487,7 @@ export default function InspectorTablet() {
           </div>
         </div>
 
-        {/* Scan & Fast Presets */}
+        {/* Scan, Voice & Fast Presets */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
           <button 
             onClick={() => setShowQRModal(true)} 
@@ -362,6 +496,28 @@ export default function InspectorTablet() {
           >
             <QrCode size={16} />
             <span>{stationVerified ? 'Re-Scan Workstation' : 'Scan Station & Traveler QR'}</span>
+          </button>
+
+          {/* Voice Readout Checklist Button */}
+          <button
+            onClick={handleReadChecklistAloud}
+            className="btn btn-outline"
+            style={{ fontSize: 11, padding: '6px 11px', display: 'flex', alignItems: 'center', gap: 5 }}
+            title="Read all checklist parameters aloud via speech synthesis"
+          >
+            <Volume2 size={14} color="#38bdf8" />
+            <span>Read Checklist</span>
+          </button>
+
+          {/* Voice Assistant Shortcut */}
+          <button
+            onClick={() => setVoiceAssistantOpen(true)}
+            className="btn btn-outline"
+            style={{ fontSize: 11, padding: '6px 11px', display: 'flex', alignItems: 'center', gap: 5, borderColor: 'rgba(6, 182, 212, 0.5)' }}
+            title="Open Hands-Free Voice Control HUD"
+          >
+            <Mic size={14} color="#06b6d4" />
+            <span>Voice Control</span>
           </button>
 
           {/* Quick Demo Pre-Fillers for fast presentation */}
@@ -561,7 +717,7 @@ export default function InspectorTablet() {
 
             {/* Linear Parameters Form */}
             <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-              {template.dimensions.map((dim, idx) => {
+              {template.dimensions.map((dim) => {
                 const isSelected = selectedPinId === dim.id;
                 const meas = measurements[dim.id] || { value: '', pass: null, toolUsed: toolAssignments[dim.id] || dim.toolRequired, isCTQ: dim.isCTQ, errorMsg: '' };
                 const currentToolId = toolAssignments[dim.id] || dim.toolRequired;
@@ -687,29 +843,52 @@ export default function InspectorTablet() {
                           >
                             ✗ Non-Conforming / Burr Detected
                           </button>
+                          {/* Dimension Mic Button */}
+                          <button
+                            type="button"
+                            onClick={() => listenForDimension(dim)}
+                            className={`btn ${activeListeningDimId === dim.id ? 'btn-danger' : 'btn-outline'}`}
+                            style={{ minHeight: gloveMode ? 52 : 40, padding: '0 12px' }}
+                            title="Speak Pass or Fail"
+                          >
+                            {activeListeningDimId === dim.id ? <Radio size={16} className="animate-spin" /> : <Mic size={16} />}
+                          </button>
                         </div>
                       ) : (
-                        <div style={{ width: '100%', position: 'relative' }}>
-                          <input
-                            type="number"
-                            step="0.001"
+                        <div style={{ display: 'flex', gap: 8, width: '100%', alignItems: 'flex-start' }}>
+                          <div style={{ flex: 1, position: 'relative' }}>
+                            <input
+                              type="number"
+                              step="0.001"
+                              disabled={!stationVerified}
+                              value={meas.value || ''}
+                              onChange={(e) => handleInputChange(dim, e.target.value)}
+                              onFocus={() => setSelectedPinId(dim.id)}
+                              placeholder={stationVerified ? `Enter reading in ${dim.unit}...` : "Locked (Scan Station QR first)"}
+                              className={`font-mono ${meas.pass === true ? 'is-pass' : meas.pass === false ? 'is-fail' : ''}`}
+                              style={{
+                                fontSize: gloveMode ? 18 : 15,
+                                fontWeight: 600,
+                                padding: gloveMode ? '14px 16px' : '10px 14px'
+                              }}
+                            />
+                            {meas.errorMsg && (
+                              <div style={{ fontSize: 11, color: '#f87171', marginTop: 4, fontWeight: 600 }}>
+                                {meas.errorMsg}
+                              </div>
+                            )}
+                          </div>
+                          {/* Dimension Mic Button */}
+                          <button
+                            type="button"
+                            onClick={() => listenForDimension(dim)}
                             disabled={!stationVerified}
-                            value={meas.value || ''}
-                            onChange={(e) => handleInputChange(dim, e.target.value)}
-                            onFocus={() => setSelectedPinId(dim.id)}
-                            placeholder={stationVerified ? `Enter reading in ${dim.unit}...` : "Locked (Scan Station QR first)"}
-                            className={`font-mono ${meas.pass === true ? 'is-pass' : meas.pass === false ? 'is-fail' : ''}`}
-                            style={{
-                              fontSize: gloveMode ? 18 : 15,
-                              fontWeight: 600,
-                              padding: gloveMode ? '14px 16px' : '10px 14px'
-                            }}
-                          />
-                          {meas.errorMsg && (
-                            <div style={{ fontSize: 11, color: '#f87171', marginTop: 4, fontWeight: 600 }}>
-                              {meas.errorMsg}
-                            </div>
-                          )}
+                            className={`btn ${activeListeningDimId === dim.id ? 'btn-danger' : 'btn-outline'}`}
+                            style={{ minHeight: gloveMode ? 52 : 40, padding: '0 12px', borderColor: activeListeningDimId === dim.id ? '#ef4444' : 'rgba(6, 182, 212, 0.4)' }}
+                            title="Speak measurement reading for this dimension"
+                          >
+                            {activeListeningDimId === dim.id ? <Radio size={16} className="animate-spin" /> : <Mic size={16} color="#06b6d4" />}
+                          </button>
                         </div>
                       )}
 
@@ -740,9 +919,21 @@ export default function InspectorTablet() {
 
               {/* Inspector Remarks / Notes */}
               <div>
-                <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 4, display: 'block' }}>
-                  Inspector Remarks & Tool Logbook Notes
-                </label>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                  <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' }}>
+                    Inspector Remarks & Tool Logbook Notes
+                  </label>
+                  <button
+                    type="button"
+                    onClick={listenForNotes}
+                    className={`btn ${isDictatingNotes ? 'btn-danger' : 'btn-outline'}`}
+                    style={{ padding: '3px 9px', fontSize: 11, display: 'flex', alignItems: 'center', gap: 4 }}
+                    title="Dictate observations by voice"
+                  >
+                    {isDictatingNotes ? <Radio size={12} className="animate-spin" /> : <Mic size={12} color="#06b6d4" />}
+                    <span>{isDictatingNotes ? 'Listening...' : 'Dictate Voice Note'}</span>
+                  </button>
+                </div>
                 <textarea
                   rows={2}
                   value={inspectorNotes}

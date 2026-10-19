@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { INITIAL_FACTORY_DATA } from '../data/mockData';
 import { sounds } from '../utils/audio';
+import { voiceEngine } from '../utils/voiceService';
 
 const AppContext = createContext();
 
@@ -27,6 +28,12 @@ export function AppProvider({ children }) {
   const [gloveMode, setGloveMode] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
 
+  // Shopfloor AI Voice Assistant state
+  const [voiceAssistantOpen, setVoiceAssistantOpen] = useState(false);
+  const [voiceListening, setVoiceListening] = useState(false);
+  const [voiceLanguage, setVoiceLanguage] = useState('en-US'); // 'en-US' | 'bn-BD'
+  const [lastVoiceEvent, setLastVoiceEvent] = useState(null);
+
   // Active view tab:
   // 'blueprint-studio' | 'floor-inspector' | 'supervisor-queue' | 'travelers' | 'rejection-mrb' | 'shipping-gate' | 'traceability' | 'audit-log' | 'shift-handover'
   const [activeTab, setActiveTab] = useState('floor-inspector');
@@ -42,6 +49,16 @@ export function AppProvider({ children }) {
       document.body.classList.remove('glove-friendly-mode');
     }
   }, [gloveMode]);
+
+  // Synchronize audio mute and voice language
+  useEffect(() => {
+    voiceEngine.setMuted(!soundEnabled);
+    sounds.muted = !soundEnabled;
+  }, [soundEnabled]);
+
+  useEffect(() => {
+    voiceEngine.setLanguage(voiceLanguage);
+  }, [voiceLanguage]);
 
   // Persist state to localStorage
   useEffect(() => {
@@ -121,6 +138,80 @@ export function AppProvider({ children }) {
     logAudit('SYSTEM_RESET', 'Factory database reset to Standard Initial Demo Seed.');
   };
 
+  // Industrial Text-To-Speech wrapper honoring audio state
+  const speakText = (text, priority = false) => {
+    if (!soundEnabled) return;
+    voiceEngine.speak(text, priority);
+  };
+
+  // Spoken dimension measurement announcement
+  const announceMeasurement = (dimName, value, unit, isPass, isCTQ) => {
+    if (!soundEnabled) return;
+    voiceEngine.announceMeasurement(dimName, value, unit, isPass, isCTQ);
+  };
+
+  // Natural Language Voice Command Execution for Shopfloor Operations
+  const handleVoiceCommand = (rawTranscript) => {
+    if (!rawTranscript) return;
+    const cmd = voiceEngine.parseCommand(rawTranscript);
+    if (!cmd) return;
+
+    setLastVoiceEvent({
+      transcript: rawTranscript,
+      action: cmd.type,
+      feedback: cmd.feedback,
+      timestamp: new Date().toLocaleTimeString(),
+    });
+
+    switch (cmd.type) {
+      case 'NAVIGATE':
+        setActiveTab(cmd.tab);
+        speakText(cmd.feedback, true);
+        break;
+      case 'TOGGLE_GLOVE':
+        setGloveMode(prev => {
+          const next = !prev;
+          speakText(`Glove mode is now ${next ? 'activated' : 'deactivated'}`, true);
+          return next;
+        });
+        break;
+      case 'SET_MUTE':
+        setSoundEnabled(!cmd.muted);
+        voiceEngine.setMuted(cmd.muted);
+        sounds.muted = cmd.muted;
+        if (!cmd.muted) speakText("Voice audio unmuted", true);
+        break;
+      case 'READ_STATUS': {
+        const curWO = factoryData.workOrders.find(w => w.id === selectedWorkOrderId);
+        if (curWO) {
+          const statusText = `Work order ${curWO.id}. Part: ${curWO.partNumber}. Status: ${curWO.overallStatus.replace(/_/g, ' ').toLowerCase()}. Batch quantity: ${curWO.batchSize} units.`;
+          speakText(statusText, true);
+        } else {
+          speakText("No work order currently selected.", true);
+        }
+        break;
+      }
+      case 'READ_CHECKLIST': {
+        const curWO = factoryData.workOrders.find(w => w.id === selectedWorkOrderId);
+        const tmpl = factoryData.blueprintTemplates?.find(t => t.id === curWO?.blueprintTemplateId) || factoryData.templates?.[0];
+        if (tmpl && tmpl.dimensions) {
+          const listStr = tmpl.dimensions.map((d, i) => `Point ${i + 1}: ${d.name}, target ${d.nominal || d.notes} ${d.unit || ''}`).join(". ");
+          speakText(`Inspection checklist: ${listStr}`, true);
+        } else {
+          speakText("No blueprint checklist found for current work order.", true);
+        }
+        break;
+      }
+      default:
+        // Broadcast custom event so active screen (e.g. InspectorTablet) can handle measurement, note, camera, etc.
+        window.dispatchEvent(new CustomEvent('zapuza-voice-command', { detail: { cmd, rawTranscript } }));
+        if (cmd.feedback) {
+          speakText(cmd.feedback, true);
+        }
+        break;
+    }
+  };
+
   // Fast forward cooling hold timer for WO-2026-002 demo
   const completeHoldTimer = (workOrderId) => {
     setFactoryData(prev => ({
@@ -152,6 +243,7 @@ export function AppProvider({ children }) {
     }));
     logAudit('HOLD_TIMER_MANUAL_OVERRIDE', `Process cooling hold cleared for ${workOrderId}.`);
     sounds.playPass();
+    speakText(`Cooling hold timer completed for work order ${workOrderId}. Process interlock released.`);
   };
 
   // Blueprint Studio: Add / Update Pin
@@ -244,6 +336,7 @@ export function AppProvider({ children }) {
         'QUARANTINED_MRB'
       );
       sounds.playAlarm();
+      speakText(`Critical alert! Job ${workOrderId} failed Critical To Quality parameter. Auto-frozen and quarantined to MRB.`);
     } else {
       logAudit(
         'INSPECTION_SUBMITTED_FOR_REVIEW',
@@ -252,6 +345,7 @@ export function AppProvider({ children }) {
         'AWAITING_SUPERVISOR_APPROVAL'
       );
       sounds.playPass();
+      speakText(`Inspection for ${workOrderId} submitted. Routed to supervisor approval queue.`);
     }
   };
 
@@ -285,6 +379,7 @@ export function AppProvider({ children }) {
 
     logAudit('SUPERVISOR_APPROVAL', `Work Order ${workOrderId} approved by supervisor. Lot cleared for packing & dispatch.`, 'AWAITING_APPROVAL', 'READY_FOR_DISPATCH');
     sounds.playPass();
+    speakText(`Work order ${workOrderId} approved by supervisor. Lot cleared for packing and dispatch.`);
   };
 
   // Supervisor Conditional Concession Action (ONLY if non-CTQ!)
@@ -331,6 +426,7 @@ export function AppProvider({ children }) {
       'CONCESSION_RELEASED'
     );
     sounds.playPass();
+    speakText(`Conditional concession approved for work order ${workOrderId}.`);
     return true;
   };
 
@@ -364,6 +460,7 @@ export function AppProvider({ children }) {
 
     logAudit('SUPERVISOR_REJECTION_QUARANTINE', `Work Order ${workOrderId} rejected and routed to Digital Rejection Holding Area. Reason: ${reason}`, 'AWAITING_APPROVAL', 'QUARANTINED_MRB');
     sounds.playAlarm();
+    speakText(`Work order ${workOrderId} rejected and quarantined to Material Review Board.`);
   };
 
   // Material Review Board (MRB) 4-Way Disposition
@@ -482,6 +579,7 @@ export function AppProvider({ children }) {
 
     logAudit('SHIPPING_GATE_PASS_GENERATED', `Gate Pass ${gatePassNumber} issued for ${workOrderId}. Shipping Interlocks verified green.`);
     sounds.playPass();
+    speakText(`Shipping Gate Pass ${gatePassNumber} generated. Vehicle ${manifest.vehicleNumber} cleared for departure.`);
     return { success: true, manifest };
   };
 
@@ -503,6 +601,7 @@ export function AppProvider({ children }) {
     }));
     logAudit('SHIFT_HANDOVER_ACKNOWLEDGED', `Digital shift handover ${handoverId} acknowledged by ${currentUser.name}.`);
     sounds.playPass();
+    speakText("Shift handover acknowledged.");
   };
 
   return (
@@ -515,6 +614,18 @@ export function AppProvider({ children }) {
         setGloveMode,
         soundEnabled,
         setSoundEnabled,
+        voiceAssistantOpen,
+        setVoiceAssistantOpen,
+        voiceListening,
+        setVoiceListening,
+        voiceLanguage,
+        setVoiceLanguage,
+        lastVoiceEvent,
+        setLastVoiceEvent,
+        speakText,
+        announceMeasurement,
+        handleVoiceCommand,
+        voiceEngine,
         activeTab,
         setActiveTab,
         selectedWorkOrderId,

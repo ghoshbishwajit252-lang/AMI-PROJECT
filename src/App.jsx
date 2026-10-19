@@ -10,6 +10,7 @@ import ShippingGatekeeper from './components/ShippingGatekeeper/ShippingGatekeep
 import TraceabilityEngine from './components/TraceabilityEngine/TraceabilityEngine';
 import AuditTrail from './components/AuditTrail/AuditTrail';
 import ShiftHandover from './components/ShiftHandover/ShiftHandover';
+import VoiceAssistantHUD from './components/VoiceAssistant/VoiceAssistantHUD';
 import { ShieldCheck, Cpu, HardDrive } from 'lucide-react';
 
 function MainContent() {
@@ -80,6 +81,7 @@ export default function App() {
         <Navbar />
         <MainContent />
         <Footer />
+        <VoiceAssistantHUD />
       </div>
     </AppProvider>
   );

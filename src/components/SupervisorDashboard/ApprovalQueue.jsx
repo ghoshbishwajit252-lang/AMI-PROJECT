@@ -2,22 +2,14 @@ import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { 
   FileCheck2, 
-  CheckCircle, 
-  AlertTriangle, 
-  ShieldAlert, 
-  Clock, 
-  ChevronRight, 
   Eye, 
-  Filter, 
-  UserCheck,
-  AlertOctagon,
-  Sparkles
+  AlertOctagon
 } from 'lucide-react';
 import ReviewModal from './ReviewModal';
 import { sounds } from '../../utils/audio';
 
 export default function ApprovalQueue() {
-  const { factoryData, currentUser } = useApp();
+  const { factoryData } = useApp();
 
   const [filterStatus, setFilterStatus] = useState('ALL'); // ALL | PENDING | CONCESSION | APPROVED | REJECTED
   const [selectedWOForReview, setSelectedWOForReview] = useState(null);

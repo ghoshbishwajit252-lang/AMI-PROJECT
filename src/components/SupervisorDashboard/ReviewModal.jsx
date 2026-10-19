@@ -11,12 +11,14 @@ import {
   Lock, 
   AlertOctagon, 
   ArrowRight,
-  ClipboardList
+  ClipboardList,
+  Mic,
+  Radio
 } from 'lucide-react';
 import { sounds } from '../../utils/audio';
 
 export default function ReviewModal({ workOrder, onClose }) {
-  const { factoryData, approveInspection, grantConcession, rejectToQuarantine, currentUser } = useApp();
+  const { factoryData, approveInspection, grantConcession, rejectToQuarantine, currentUser, voiceEngine, speakText } = useApp();
 
   const [notes, setNotes] = useState('');
   const [showConcessionForm, setShowConcessionForm] = useState(false);
@@ -24,6 +26,8 @@ export default function ReviewModal({ workOrder, onClose }) {
   const [engineeringJustification, setEngineeringJustification] = useState('');
   const [showRejectionForm, setShowRejectionForm] = useState(false);
   const [rejectionReason, setRejectionReason] = useState('');
+  const [isDictatingJustification, setIsDictatingJustification] = useState(false);
+  const [isDictatingRejection, setIsDictatingRejection] = useState(false);
 
   const template = factoryData.templates.find(t => t.partNumber === workOrder.partNumber) || factoryData.templates[0];
   const insp = workOrder.inspectionData;
@@ -69,6 +73,46 @@ export default function ReviewModal({ workOrder, onClose }) {
     e.preventDefault();
     rejectToQuarantine(workOrder.id, rejectionReason || "Dimensional non-conformance exceeding allowable limits.");
     onClose();
+  };
+
+  const listenForJustification = () => {
+    if (isDictatingJustification) {
+      voiceEngine.stopListening();
+      setIsDictatingJustification(false);
+      return;
+    }
+    setIsDictatingJustification(true);
+    sounds.playClick();
+    speakText("Dictate engineering concession justification.", true);
+    voiceEngine.startListening({
+      onResult: (text) => {
+        setIsDictatingJustification(false);
+        setEngineeringJustification(prev => prev ? `${prev} ${text}` : text);
+        sounds.playPass();
+      },
+      onError: () => setIsDictatingJustification(false),
+      onEnd: () => setIsDictatingJustification(false),
+    });
+  };
+
+  const listenForRejection = () => {
+    if (isDictatingRejection) {
+      voiceEngine.stopListening();
+      setIsDictatingRejection(false);
+      return;
+    }
+    setIsDictatingRejection(true);
+    sounds.playClick();
+    speakText("Dictate quarantine rejection reason.", true);
+    voiceEngine.startListening({
+      onResult: (text) => {
+        setIsDictatingRejection(false);
+        setRejectionReason(prev => prev ? `${prev} ${text}` : text);
+        sounds.playPass();
+      },
+      onError: () => setIsDictatingRejection(false),
+      onEnd: () => setIsDictatingRejection(false),
+    });
   };
 
   return (
@@ -299,9 +343,21 @@ export default function ReviewModal({ workOrder, onClose }) {
               </div>
 
               <div>
-                <label style={{ fontSize: 12, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>
-                  Detailed Engineering Justification (Mandatory for Quality Audit):
-                </label>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                  <label style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                    Detailed Engineering Justification (Mandatory for Quality Audit):
+                  </label>
+                  <button
+                    type="button"
+                    onClick={listenForJustification}
+                    className={`btn ${isDictatingJustification ? 'btn-danger' : 'btn-outline'}`}
+                    style={{ padding: '2px 8px', fontSize: 11, display: 'flex', alignItems: 'center', gap: 4 }}
+                    title="Dictate engineering justification by voice"
+                  >
+                    {isDictatingJustification ? <Radio size={12} className="animate-spin" /> : <Mic size={12} color="#f59e0b" />}
+                    <span>{isDictatingJustification ? 'Listening...' : 'Dictate Justification'}</span>
+                  </button>
+                </div>
                 <textarea 
                   rows={3} 
                   required
@@ -339,9 +395,21 @@ export default function ReviewModal({ workOrder, onClose }) {
 
             <form onSubmit={handleExecuteRejection} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               <div>
-                <label style={{ fontSize: 12, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>
-                  Rejection Reason & Non-Conformance Description:
-                </label>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                  <label style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                    Rejection Reason & Non-Conformance Description:
+                  </label>
+                  <button
+                    type="button"
+                    onClick={listenForRejection}
+                    className={`btn ${isDictatingRejection ? 'btn-danger' : 'btn-outline'}`}
+                    style={{ padding: '2px 8px', fontSize: 11, display: 'flex', alignItems: 'center', gap: 4 }}
+                    title="Dictate rejection reason by voice"
+                  >
+                    {isDictatingRejection ? <Radio size={12} className="animate-spin" /> : <Mic size={12} color="#ef4444" />}
+                    <span>{isDictatingRejection ? 'Listening...' : 'Dictate Reason'}</span>
+                  </button>
+                </div>
                 <textarea 
                   rows={2} 
                   required

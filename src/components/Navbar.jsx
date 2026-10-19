@@ -17,7 +17,8 @@ import {
   ChevronDown,
   Layers,
   Sparkles,
-  RefreshCw
+  RefreshCw,
+  Mic
 } from 'lucide-react';
 import { sounds } from '../utils/audio';
 
@@ -29,6 +30,9 @@ export default function Navbar() {
     setGloveMode, 
     soundEnabled, 
     setSoundEnabled,
+    voiceAssistantOpen,
+    setVoiceAssistantOpen,
+    voiceListening,
     activeTab, 
     setActiveTab, 
     setSelectedWorkOrderId,
@@ -316,6 +320,27 @@ export default function Navbar() {
             title={soundEnabled ? 'Mute audio cues' : 'Enable audio feedback'}
           >
             {soundEnabled ? <Volume2 size={16} color="#34d399" /> : <VolumeX size={16} color="#ef4444" />}
+          </button>
+
+          {/* Voice Assistant Toggle */}
+          <button
+            onClick={() => {
+              setVoiceAssistantOpen(!voiceAssistantOpen);
+              sounds.playClick();
+            }}
+            className={`btn ${voiceAssistantOpen || voiceListening ? 'btn-primary' : 'btn-outline'}`}
+            style={{ 
+              padding: '7px 12px', 
+              fontSize: 12, 
+              display: 'flex', 
+              alignItems: 'center', 
+              gap: 6,
+              boxShadow: voiceListening ? '0 0 15px rgba(6, 182, 212, 0.7)' : 'none'
+            }}
+            title="Shopfloor AI Voice Assistant (Hands-Free Quality Control)"
+          >
+            <Mic size={15} color={voiceListening ? '#ef4444' : voiceAssistantOpen ? '#38bdf8' : 'currentColor'} />
+            <span>Voice AI</span>
           </button>
 
           {/* Reset System State Button */}
