@@ -278,3 +278,4 @@ When recording your screen demonstration, follow this 5-minute flow:
 - [x] Automated test script (`test/verify-interlocks.js`) with 22/22 passing assertions
 - [x] Video walkthrough script and placeholder in README
 - [x] Zero placeholders: High-res CAD blueprints, MTC certificates, and defect photos bundled
+https://drive.google.com/file/d/1niMScA6E4M6e_OeoJ4HtIOs4nOLiUGGF/view?usp=sharing
